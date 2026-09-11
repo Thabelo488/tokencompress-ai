@@ -41,4 +41,4 @@ python -m streamlit run app.py
 
 ## Hackathon pitch
 
-"TokenCompress AI reduces prompt and code size deterministically, locally, and without external AI calls. It preserves semantics while cutting token spend and improving performance for constrained AI workflows."
+TokenCompress AI reduces prompt and code size deterministically, locally, and without external AI calls. It preserves semantics while cutting token spend and improving performance for constrained AI workflows.
