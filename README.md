@@ -3,7 +3,7 @@
 TokenCompress AI is a local token optimization engine for code and prompts. It uses deterministic algorithms instead of external AI APIs:
 
 - AST-based Python code compression removes docstrings and comments while preserving executable semantics.
-- Greedy fractional-knapsack compression ranks prompt sentences by information density and keeps only the most valuable units inside a token budget.
+- Structure-aware knapsack compression classifies prompt units, prioritizes constraints and output requirements, reduces redundancy, and selects the highest-value subset inside a token budget.
 - Token telemetry estimates token counts and calculates cost savings using a standard API pricing assumption.
 
 ## Features

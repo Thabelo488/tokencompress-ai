@@ -48,3 +48,28 @@ def test_knapsack_budget_and_empty_input_edges() -> None:
     assert compress_prompt("important return value", 0) == ""
     source = "Always return the requested class definition."
     assert compress_prompt(source, 100) == source
+
+
+def test_structure_aware_selection_prefers_constraints_and_outputs() -> None:
+    source = (
+        "Hello, please provide a friendly explanation. "
+        "Always validate input before processing. "
+        "The output must return JSON. "
+        "Thank you for your help."
+    )
+    compressed = compress_prompt(source, 18)
+    assert "validate input" in compressed
+    assert "return JSON" in compressed
+    assert "Hello" not in compressed
+
+
+def test_compression_avoids_redundant_units_and_stays_under_budget() -> None:
+    source = (
+        "Always validate the input before processing. "
+        "Always validate the input before sending the request. "
+        "Never expose credentials in logs. "
+        "Return a JSON error for invalid input."
+    )
+    compressed = compress_prompt(source, 20)
+    assert estimate_tokens(compressed) <= 20
+    assert compressed.count("Always validate") <= 1

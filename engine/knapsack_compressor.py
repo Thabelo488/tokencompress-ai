@@ -27,6 +27,14 @@ _LOW_VALUE_KEYWORDS: Tuple[str, ...] = (
     "would you",
     "could you",
 )
+_STRUCTURE_WEIGHTS: Dict[str, float] = {
+    "instruction": 2.0,
+    "constraint": 2.4,
+    "output": 2.2,
+    "context": 1.4,
+    "example": 1.1,
+    "filler": 0.1,
+}
 
 
 @dataclass(frozen=True)
@@ -37,6 +45,23 @@ class PromptUnit:
     text: str
     weight: int
     value: float
+    category: str
+
+
+def classify_unit(text: str) -> str:
+    """Classify a unit using deterministic linguistic and formatting cues."""
+    lowered = text.lower()
+    if any(marker in lowered for marker in ("must ", "never ", "always ", "required", "do not")):
+        return "constraint"
+    if any(marker in lowered for marker in ("return ", "output", "format", "respond", "include")):
+        return "output"
+    if any(marker in lowered for marker in ("for example", "e.g.", "example:", "```")):
+        return "example"
+    if any(marker in lowered for marker in ("input", "context", "background", "given ", "the user")):
+        return "context"
+    if any(marker in lowered for marker in ("please", "thank you", "hello", "kindly")):
+        return "filler"
+    return "instruction"
 
 
 def split_prompt_units(text: str) -> List[str]:
@@ -65,35 +90,68 @@ def information_density(text: str) -> float:
 
 def score_prompt_units(text: str) -> List[PromptUnit]:
     """Return prompt units with estimated token weights and density values."""
-    return [
-        PromptUnit(index=index, text=unit, weight=estimate_tokens(unit), value=information_density(unit))
-        for index, unit in enumerate(split_prompt_units(text))
-    ]
+    scored: List[PromptUnit] = []
+    for index, unit in enumerate(split_prompt_units(text)):
+        category = classify_unit(unit)
+        value = information_density(unit) + _STRUCTURE_WEIGHTS[category]
+        scored.append(
+            PromptUnit(
+                index=index,
+                text=unit,
+                weight=estimate_tokens(unit),
+                value=value,
+                category=category,
+            )
+        )
+    return scored
+
+
+def _similarity(left: str, right: str) -> float:
+    """Return token-set Jaccard similarity for redundancy detection."""
+    left_words = set(re.findall(r"[a-z][a-z'-]+", left.lower()))
+    right_words = set(re.findall(r"[a-z][a-z'-]+", right.lower()))
+    union = left_words | right_words
+    return len(left_words & right_words) / len(union) if union else 0.0
+
+
+def _select_units(units: List[PromptUnit], max_tokens: int) -> List[PromptUnit]:
+    """Select a high-value, non-redundant subset with exact 0/1 knapsack DP."""
+    if not units or max_tokens <= 0:
+        return []
+    # Account for newline separators so the final rendered prompt stays bounded.
+    weights = [unit.weight + 1 for unit in units]
+    values = [unit.value for unit in units]
+    dp: List[float] = [0.0] * (max_tokens + 1)
+    choices: List[List[int]] = [[] for _ in range(max_tokens + 1)]
+    for index, unit in enumerate(units):
+        weight = weights[index]
+        if weight > max_tokens:
+            continue
+        for budget in range(max_tokens, weight - 1, -1):
+            previous = choices[budget - weight]
+            if any(_similarity(unit.text, units[item].text) >= 0.75 for item in previous):
+                continue
+            candidate = dp[budget - weight] + values[index]
+            if candidate > dp[budget]:
+                dp[budget] = candidate
+                choices[budget] = previous + [index]
+    selected = [units[index] for index in choices[max_tokens]]
+    selected.sort(key=lambda unit: unit.index)
+    return selected
 
 
 def compress_prompt(text: str, max_tokens: int) -> str:
-    """Select the densest complete units that fit within ``max_tokens``.
-
-    This is the practical whole-unit variant of a greedy fractional knapsack:
-    units are ranked by value/weight, while output remains readable and never
-    exceeds the requested budget.
-    """
+    """Select structured, high-value complete units within ``max_tokens``."""
     if max_tokens <= 0 or not text.strip():
         return ""
     units = score_prompt_units(text)
-    ranked = sorted(
-        units,
-        key=lambda unit: (unit.value / max(unit.weight, 1), unit.value, -unit.index),
-        reverse=True,
-    )
-    selected: List[PromptUnit] = []
-    used_tokens = 0
-    for unit in ranked:
-        if used_tokens + unit.weight <= max_tokens:
-            selected.append(unit)
-            used_tokens += unit.weight
-    selected.sort(key=lambda unit: unit.index)
-    return "\n".join(unit.text for unit in selected)
+    selected = _select_units(units, max_tokens)
+    output = "\n".join(unit.text for unit in selected)
+    # A tokenizer can count separators differently; trim lowest-value units if needed.
+    while estimate_tokens(output) > max_tokens and selected:
+        selected.pop()
+        output = "\n".join(unit.text for unit in selected)
+    return output
 
 
 def compression_stats(text: str, max_tokens: int) -> Dict[str, int]:
